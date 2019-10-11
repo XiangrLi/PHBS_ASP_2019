@@ -128,7 +128,22 @@ class ModelHagan:
         you may use sopt.root
         # https://docs.scipy.org/doc/scipy-0.18.1/reference/generated/scipy.optimize.root.html#scipy.optimize.root
         '''
-        return 0, 0, 0 # sigma, alpha, rho
+        texp = self.texp if(texp is None) else texp
+        if (is_vol):
+            vol3=price_or_vol3
+        else:
+            sigma3=[self.impvol(price,strike,spot,texp,cp_sign,setval) for price,strike in zip(price_or_vol3,strike3)]
+            vol3=[self.bsm_vol(strike,spot,texp,sigma) for strike,sigma in zip(strike3,sigma3)]
+            
+        def fun(x):   
+            return bsm_vol(strike3, spot, texp, np.exp(x[0]), np.exp(x[1]), np.tanh(x[2]), beta=self.beta)-vol3
+        sol=sopt.root(fun,[1.0,0.0,0.0])
+        x0,x1,x2=sol.x
+        sigma=np.exp(x0)
+        alpha=np.exp(x1)
+        rho=np.tanh(x2)
+        
+        return sigma,alpha,rho # sigma, alpha, rho
 
 '''
 Hagan model class for beta=0
@@ -178,7 +193,22 @@ class ModelNormalHagan:
         you may use sopt.root
         # https://docs.scipy.org/doc/scipy-0.18.1/reference/generated/scipy.optimize.root.html#scipy.optimize.root
         '''
-        return 0, 0, 0 # sigma, alpha, rho
+        texp = self.texp if(texp is None) else texp
+        if (is_vol):
+            vol3=price_or_vol3
+        else:
+            sigma3=[self.impvol(price,strike,spot,texp,cp_sign,setval) for price,strike in zip(price_or_vol3,strike3)]
+            vol3=[self.norm_vol(strike,spot,texp,sigma) for strike,sigma in zip(strike3,sigma3)]
+            
+        def fun(x):   
+            return norm_vol(strike3, spot, texp, np.exp(x[0]), np.exp(x[1]), np.tanh(x[2]))-vol3
+        sol=sopt.root(fun,[1.0,0.0,0.0])
+        x0,x1,x2=sol.x
+        sigma=np.exp(x0)
+        alpha=np.exp(x1)
+        rho=np.tanh(x2)
+        
+        return sigma,alpha,rho # sigma, alpha, rho
 
 '''
 MC model class for Beta=1
@@ -188,6 +218,7 @@ class ModelBsmMC:
     alpha, rho = 0.0, 0.0
     texp, sigma, intr, divr = None, None, None, None
     bsm_model = None
+    tstep=0.1
     '''
     You may define more members for MC: time step, etc
     '''
@@ -207,7 +238,18 @@ class ModelBsmMC:
         this is the opposite of bsm_vol in ModelHagan class
         use bsm_model
         '''
-        return 0
+        texp = self.texp if(texp is None) else texp
+        sigma = self.sigma if(sigma is None) else sigma
+        
+        def vol(price):
+            def fun(vol)
+                return self.bsm_model.price(strike, spot, texp, vol, cp_sign=1)-price
+            sol=sopt.root(fun,1.0)
+            return sol.vol
+        
+        bsm_vol=[vol(price) for price in self.price(strike, spot, texp, sigma, cp_sign=1)]    
+            
+        return bsm_vol
     
     def price(self, strike, spot, texp=None, sigma=None, cp_sign=1):
         '''
@@ -216,6 +258,7 @@ class ModelBsmMC:
         You may fix the random number seed
         '''
         np.random.seed(12345)
+        
         return 0
 
 '''
