@@ -218,19 +218,23 @@ class ModelBsmMC:
     alpha, rho = 0.0, 0.0
     texp, sigma, intr, divr = None, None, None, None
     bsm_model = None
-    tstep=0.1
+    samp=10000
+    tsteps=100
     '''
     You may define more members for MC: time step, etc
     '''
     
-    def __init__(self, texp, sigma, alpha=0, rho=0.0, beta=1.0, intr=0, divr=0):
+    def __init__(self, texp, sigma, alpha=0, rho=0.0, beta=1.0, intr=0, divr=0,samp=10000,tsteps=100):
         self.texp = texp
         self.sigma = sigma
         self.alpha = alpha
         self.rho = rho
         self.intr = intr
         self.divr = divr
+        self.samp=samp
+        self.tsteps=tsteps
         self.bsm_model = bsm.Model(texp, sigma, intr=intr, divr=divr)
+        
         
     def bsm_vol(self, strike, spot, texp=None, sigma=None):
         ''''
@@ -241,15 +245,10 @@ class ModelBsmMC:
         texp = self.texp if(texp is None) else texp
         sigma = self.sigma if(sigma is None) else sigma
         
-        def vol(price):
-            def fun(vol)
-                return self.bsm_model.price(strike, spot, texp, vol, cp_sign=1)-price
-            sol=sopt.root(fun,1.0)
-            return sol.vol
+        price=self.price(strike, spot, texp, sigma, cp_sign=1)
+        bsm_vol=self.normal_model.impvol(price,strike,spot,texp,cp_sign=1)
         
-        bsm_vol=[vol(price) for price in self.price(strike, spot, texp, sigma, cp_sign=1)]    
-            
-        return bsm_vol
+        return bsm_vol   
     
     def price(self, strike, spot, texp=None, sigma=None, cp_sign=1):
         '''
@@ -257,9 +256,30 @@ class ModelBsmMC:
         Generate paths for vol and price first. Then get prices (vector) for all strikes
         You may fix the random number seed
         '''
-        np.random.seed(12345)
+        #np.random.seed(12345)
+        texp = self.texp if(texp is None) else texp
+        sigma = self.sigma if(sigma is None) else sigma
         
-        return 0
+        div_fac = np.exp(-texp*self.divr)
+        disc_fac = np.exp(-texp*self.intr)
+        forward = spot / disc_fac *div_fac
+        
+        tsteps=self.tsteps
+        samp=self.samp
+        
+        dt=texp/tsteps
+        
+        normal2d=np.random.multivariate_normal([0,0],[[1,self.rho],[self.rho,1]],size=(samp,tsteps))
+        W=normal2d[:,:,0]
+        Z=normal2d[:,:,1]
+        
+        sigmas=sigma*np.cumprod(np.exp(self.alpha*np.sqrt(dt)*Z-1/2*np.square(self.alpha)*dt),axis=1)
+        sigmas=np.c_[sigma*np.ones((samp,1)),sigmas]
+        sprices=forward*np.cumprod(np.exp(sigmas[:,0:-1]*np.sqrt(dt)*W-1/2*np.square(sigmas[:,0:-1])*dt),axis=1)
+        
+        prices=disc_fac*np.mean(np.fmax(cp_sign*(sprices[:,-1][:,None]-strike),0),axis=0) 
+
+        return prices
 
 '''
 MC model class for Beta=0
@@ -269,14 +289,18 @@ class ModelNormalMC:
     alpha, rho = 0.0, 0.0
     texp, sigma, intr, divr = None, None, None, None
     normal_model = None
+    samp=10000
+    tsteps=100   
     
-    def __init__(self, texp, sigma, alpha=0, rho=0.0, beta=0.0, intr=0, divr=0):
+    def __init__(self, texp, sigma, alpha=0, rho=0.0, beta=0.0, intr=0, divr=0,samp=10000,tsteps=100):
         self.texp = texp
         self.sigma = sigma
         self.alpha = alpha
         self.rho = rho
         self.intr = intr
         self.divr = divr
+        self.samp=samp
+        self.tsteps=tsteps        
         self.normal_model = normal.Model(texp, sigma, intr=intr, divr=divr)
         
     def norm_vol(self, strike, spot, texp=None, sigma=None):
@@ -285,7 +309,13 @@ class ModelNormalMC:
         this is the opposite of normal_vol in ModelNormalHagan class
         use normal_model 
         '''
-        return 0
+        texp = self.texp if(texp is None) else texp
+        sigma = self.sigma if(sigma is None) else sigma
+        
+        price=self.price(strike, spot, texp, sigma, cp_sign=1)
+        norm_vol=self.normal_model.impvol(price,strike,spot,texp,cp_sign=1)
+        
+        return norm_vol
         
     def price(self, strike, spot, texp=None, sigma=None, cp_sign=1):
         '''
@@ -293,8 +323,30 @@ class ModelNormalMC:
         Generate paths for vol and price first. Then get prices (vector) for all strikes
         You may fix the random number seed
         '''
-        np.random.seed(12345)
-        return 0
+        #np.random.seed(12345)
+        texp = self.texp if(texp is None) else texp
+        sigma = self.sigma if(sigma is None) else sigma
+
+        div_fac = np.exp(-texp*self.divr)
+        disc_fac = np.exp(-texp*self.intr)
+        forward = spot / disc_fac *div_fac
+        
+        tsteps=self.tsteps
+        samp=self.samp
+        
+        dt=texp/tsteps
+        
+        normal2d=np.random.multivariate_normal([0,0],[[1,self.rho],[self.rho,1]],size=(samp,tsteps))
+        W=normal2d[:,:,0]
+        Z=normal2d[:,:,1]
+        
+        sigmas=sigma*np.cumprod(np.exp(self.alpha*np.sqrt(dt)*Z-1/2*np.square(self.alpha)*dt),axis=1)
+        sigmas=np.c_[sigma*np.ones((samp,1)),sigmas]
+        sprices=forward+np.cumsum(sigmas[:,0:-1]*np.sqrt(dt)*W,axis=1)
+        
+        prices=disc_fac*np.mean(np.fmax(cp_sign*(sprices[:,-1][:,None]-strike),0),axis=0) 
+
+        return prices
 
 '''
 Conditional MC model class for Beta=1
@@ -304,17 +356,22 @@ class ModelBsmCondMC:
     alpha, rho = 0.0, 0.0
     texp, sigma, intr, divr = None, None, None, None
     bsm_model = None
+    samp=10000
+    tsteps=100    
+    
     '''
     You may define more members for MC: time step, etc
     '''
     
-    def __init__(self, texp, sigma, alpha=0, rho=0.0, beta=1.0, intr=0, divr=0):
+    def __init__(self, texp, sigma, alpha=0, rho=0.0, beta=1.0, intr=0, divr=0,samp=10000,tsteps=100):
         self.texp = texp
         self.sigma = sigma
         self.alpha = alpha
         self.rho = rho
         self.intr = intr
         self.divr = divr
+        self.samp=samp
+        self.tsteps=tsteps
         self.bsm_model = bsm.Model(texp, sigma, intr=intr, divr=divr)
         
     def bsm_vol(self, strike, spot, texp=None, sigma=None):
@@ -324,7 +381,13 @@ class ModelBsmCondMC:
         use bsm_model
         should be same as bsm_vol method in ModelBsmMC (just copy & paste)
         '''
-        return 0
+        texp = self.texp if(texp is None) else texp
+        sigma = self.sigma if(sigma is None) else sigma
+        
+        price=self.price(strike, spot, texp, sigma, cp_sign=1)
+        bsm_vol=self.normal_model.impvol(price,strike,spot,texp,cp_sign=1)
+        
+        return bsm_vol   
     
     def price(self, strike, spot, texp=None, sigma=None, cp_sign=1):
         '''
@@ -333,8 +396,28 @@ class ModelBsmCondMC:
         Then get prices (vector) for all strikes
         You may fix the random number seed
         '''
-        np.random.seed(12345)
-        return 0
+        #np.random.seed(12345)
+        texp = self.texp if(texp is None) else texp
+        sigma = self.sigma if(sigma is None) else sigma
+        
+        tsteps=self.tsteps
+        samp=self.samp        
+        
+        dt=texp/tsteps
+        Z=np.random.normal(0,1,size=(samp,tsteps))
+        sigmas=sigma*np.cumprod(np.exp(self.alpha*np.sqrt(dt)*Z-1/2*np.square(self.alpha)*dt),axis=1)
+        sigmas=np.c_[sigma*np.ones((samp,1)),sigmas]
+        simp=np.ones((1,tsteps+1))
+        simp[0,1:-1:2]=4
+        simp[0,2:-1:2]=2
+        I=np.sum(simp*np.square(sigmas),axis=1)*dt/3
+        
+        spot_cond=spot*np.exp(self.rho/self.alpha*(sigmas[:,-1]-sigmas[:,0])-1/2*np.square(self.rho)*I)
+        vol_cond=np.sqrt((1-np.square(self.rho))*I/texp)
+        prices_samp=self.bsm_model.price(strike,spot_cond[:,None],texp,vol_cond[:,None],cp_sign=cp_sign)
+        prices=np.mean(prices_samp,axis=0)
+       
+        return prices
 
 '''
 Conditional MC model class for Beta=0
@@ -344,14 +427,18 @@ class ModelNormalCondMC:
     alpha, rho = 0.0, 0.0
     texp, sigma, intr, divr = None, None, None, None
     normal_model = None
+    tsteps=100
+    samp=10000
     
-    def __init__(self, texp, sigma, alpha=0, rho=0.0, beta=0.0, intr=0, divr=0):
+    def __init__(self, texp, sigma, alpha=0, rho=0.0, beta=0.0, intr=0, divr=0,tsteps=100,samp=10000):
         self.texp = texp
         self.sigma = sigma
         self.alpha = alpha
         self.rho = rho
         self.intr = intr
         self.divr = divr
+        self.tsteps=tsteps
+        self.samp=samp
         self.normal_model = normal.Model(texp, sigma, intr=intr, divr=divr)
         
     def norm_vol(self, strike, spot, texp=None, sigma=None):
@@ -361,7 +448,13 @@ class ModelNormalCondMC:
         use normal_model
         should be same as norm_vol method in ModelNormalMC (just copy & paste)
         '''
-        return 0
+        texp = self.texp if(texp is None) else texp
+        sigma = self.sigma if(sigma is None) else sigma
+        
+        price=self.price(strike, spot, texp, sigma, cp_sign=1)
+        norm_vol=self.normal_model.impvol(price,strike,spot,texp,cp_sign=1)
+        
+        return norm_vol
         
     def price(self, strike, spot, texp=None, sigma=None, cp_sign=1):
         '''
@@ -369,5 +462,25 @@ class ModelNormalCondMC:
         Generate paths for vol only. Then compute integrated variance and normal price.
         You may fix the random number seed
         '''
-        np.random.seed(12345)
-        return 0
+        #np.random.seed(12345)
+        texp = self.texp if(texp is None) else texp
+        sigma = self.sigma if(sigma is None) else sigma
+
+        tsteps=self.tsteps
+        samp=self.samp
+        
+        dt=texp/tsteps
+        Z=np.random.normal(0,1,size=(samp,tsteps))
+        sigmas=sigma*np.cumprod(np.exp(self.alpha*np.sqrt(dt)*Z-1/2*np.square(self.alpha)*dt),axis=1)
+        sigmas=np.c_[sigma*np.ones((samp,1)),sigmas]
+        
+        trap=np.ones((1,tsteps+1))
+        trap[0,1:-1]=2
+        I=np.sum(trap*np.square(sigmas),axis=1)*dt/2
+        
+        spot_cond=spot+self.rho/self.alpha*(sigmas[:,-1]-sigmas[:,0])
+        vol_cond=np.sqrt((1-np.square(self.rho))*I/texp)
+        prices_samp=self.normal_model.price(strike,spot_cond[:,None],texp,vol_cond[:,None],cp_sign=cp_sign)
+        prices=np.mean(prices_samp,axis=0)
+        
+        return prices
